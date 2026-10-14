@@ -1,0 +1,720 @@
+name: Mobile App Build
+'on':
+  repository_dispatch:
+    types:
+    - mobile-app-build
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 私有源码分支
+        required: true
+        type: choice
+        default: dev
+        options:
+        - master
+        - dev
+permissions:
+  contents: read
+concurrency:
+  group: mobile-app-${{ github.event.client_payload.source_branch || inputs.source_branch || 'invalid' }}
+  cancel-in-progress: true
+env:
+  CI: 'true'
+jobs:
+  resolve:
+    if: github.repository == 'KleinerSource/omm_app' && github.ref == 'refs/heads/main' && github.actor == 'KleinerSource'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_branch: ${{ steps.source.outputs.source_branch }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      checkout_sha: ${{ steps.source.outputs.checkout_sha }}
+      flutter_version: ${{ steps.source.outputs.flutter_version }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - &ci_setup
+      name: 准备静默日志与固定源码边界
+      run: |
+        set -euo pipefail
+        ci_temp="$RUNNER_TEMP"
+        if command -v cygpath >/dev/null 2>&1; then ci_temp="$(cygpath -u "$RUNNER_TEMP")"; fi
+        cat > "$ci_temp/omm-ci.sh" <<'BASH'
+        protect() {
+          set -euo pipefail
+          omm_label="$1"
+          omm_started=$SECONDS
+          omm_log="$(mktemp "${BASH_ENV%/*}/omm-ci.XXXXXX")"
+          exec 3>&1
+          exec >"$omm_log" 2>&1
+          trap 'omm_status=$?; printf "%s: %ss; exit code: %s\n" "$omm_label" "$((SECONDS-omm_started))" "$omm_status" >&3; printf "%s: %ss; exit code: %s\n" "$omm_label" "$((SECONDS-omm_started))" "$omm_status" >> "$GITHUB_STEP_SUMMARY"; if [ "$omm_status" -ne 0 ]; then echo "::error::步骤失败；原始诊断未公开，请在私有环境复现" >&3; fi' EXIT
+        }
+        git_auth() {
+          local auth
+          auth="$(printf 'x-access-token:%s' "$MOBILE_APP_SOURCE_TOKEN" | base64 | tr -d '\r\n')"
+          GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=2 \
+          GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+          GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1= git "$@"
+        }
+        check_input() {
+          [[ "$SOURCE_BRANCH" == master || "$SOURCE_BRANCH" == dev ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+        }
+        checkout_source() {
+          [[ "$SOURCE_BRANCH" == master || "$SOURCE_BRANCH" == dev ]]
+          test ! -e source
+          git init --quiet source
+          git -C source remote add origin https://github.com/KleinerSource/mobile_app.git
+          git_auth -C source fetch --quiet --no-tags origin "+refs/heads/$SOURCE_BRANCH:refs/remotes/origin/$SOURCE_BRANCH"
+          omm_head="$(git -C source rev-parse "origin/$SOURCE_BRANCH")"
+          [[ "$omm_head" =~ ^[0-9a-f]{40}$ ]]
+          SOURCE_SHA="${SOURCE_SHA:-$omm_head}"
+          check_input
+          git -C source merge-base --is-ancestor "$SOURCE_SHA" "$omm_head"
+          git -C source checkout --quiet --detach "$SOURCE_SHA"
+        }
+        metadata_parent() {
+          local subject parent version
+          subject="$(git -C source show -s --format=%s "$1")"
+          [[ "$subject" =~ ^chore:\ bump\ build\ metadata\ to\ ([0-9]+\.[0-9]+\.[0-9]+\+[0-9]+)\ \[skip\ ci\]$ ]] || return 1
+          version="${BASH_REMATCH[1]}"
+          [[ "$(git -C source show -s --format=%an "$1")" == 'github-actions[bot]' ]] || return 1
+          [[ "$(git -C source diff-tree --no-commit-id --name-only -r "$1")" == pubspec.yaml ]] || return 1
+          parent="$(git -C source show -s --format=%P "$1")"
+          [[ "$parent" =~ ^[0-9a-f]{40}$ ]] || return 1
+          git -C source show -s --format=%b "$1" | grep -Fxq "Build-Source-SHA: $parent" || return 1
+          [[ "$(git -C source show "$1:pubspec.yaml" | sed -n 's/^version: //p' | tr -d '\r')" == "$version" ]] || return 1
+          printf '%s' "$parent"
+        }
+        get_release() {
+          local status response
+          response="$(mktemp "${BASH_ENV%/*}/omm-release.XXXXXX")"
+          status="$(curl --silent --show-error --max-time 60 -o "$response" -w '%{http_code}' \
+            -H "Authorization: Bearer $3" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$1/releases/tags/$2")"
+          case "$status" in
+            200) cat "$response" ;;
+            404) echo null ;;
+            *) return 1 ;;
+          esac
+        }
+        BASH
+        echo "BASH_ENV=$ci_temp/omm-ci.sh" >> "$GITHUB_ENV"
+    - name: 校验事件、分支、提交及凭据
+      run: |
+        protect source-validation
+        [[ "$GITHUB_REPOSITORY" == KleinerSource/omm_app && "$GITHUB_REF" == refs/heads/main && "$GITHUB_ACTOR" == KleinerSource ]]
+        for key in MOBILE_APP_SOURCE_TOKEN ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+          test -n "${!key}"
+        done
+        if [ "$GITHUB_EVENT_NAME" = repository_dispatch ]; then
+          [[ "$(jq -r .action "$GITHUB_EVENT_PATH")" == mobile-app-build ]]
+          check_input
+        else
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+        fi
+        checkout_source
+        requested="$SOURCE_SHA"
+        build_sha="$omm_head"
+        if parent="$(metadata_parent "$omm_head")"; then
+          [[ "$requested" == "$omm_head" || "$requested" == "$parent" ]]
+          SOURCE_SHA="$parent"
+        else
+          [[ "$requested" == "$omm_head" ]]
+        fi
+        sdk=3.47.0
+        if [ "$SOURCE_BRANCH" = dev ]; then sdk=3.44.0; fi
+        printf 'source_branch=%s\nsource_sha=%s\ncheckout_sha=%s\nflutter_version=%s\n' \
+          "$SOURCE_BRANCH" "$SOURCE_SHA" "$build_sha" "$sdk" >> "$GITHUB_OUTPUT"
+      id: source
+      env:
+        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
+        ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        SOURCE_BRANCH: ${{ github.event.client_payload.source_branch || inputs.source_branch }}
+        SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+  test:
+    runs-on: ubuntu-latest
+    needs:
+    - resolve
+    timeout-minutes: 45
+    env:
+      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
+      SOURCE_SHA: ${{ needs.resolve.outputs.checkout_sha }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - *ci_setup
+    - uses: subosito/flutter-action@v2
+      timeout-minutes: 10
+      with:
+        flutter-version: ${{ needs.resolve.outputs.flutter_version }}
+        channel: stable
+        cache: false
+    - name: 拉取固定私有提交
+      run: |
+        protect source-checkout
+        check_input
+        checkout_source
+      env:
+        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
+      timeout-minutes: 5
+    - name: pub-get
+      run: |
+        protect pub-get
+        cd source
+        flutter pub get
+      timeout-minutes: 5
+    - name: code-generation
+      run: |
+        protect code-generation
+        cd source
+        dart run build_runner build
+      timeout-minutes: 10
+    - name: analyze
+      run: |
+        protect analyze
+        cd source
+        flutter analyze --no-pub
+      timeout-minutes: 8
+    - name: full-tests
+      run: |
+        protect full-tests
+        cd source
+        flutter test --no-pub --reporter expanded
+      timeout-minutes: 20
+  header:
+    runs-on: windows-2025
+    needs:
+    - resolve
+    timeout-minutes: 25
+    env:
+      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
+      SOURCE_SHA: ${{ needs.resolve.outputs.checkout_sha }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - *ci_setup
+    - uses: subosito/flutter-action@v2
+      timeout-minutes: 10
+      with:
+        flutter-version: ${{ needs.resolve.outputs.flutter_version }}
+        channel: stable
+        cache: false
+    - name: 拉取固定私有提交
+      run: |
+        protect source-checkout
+        check_input
+        checkout_source
+      env:
+        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
+      timeout-minutes: 5
+    - name: pub-get
+      run: |
+        protect pub-get
+        cd source
+        flutter pub get
+      timeout-minutes: 5
+    - name: header-goldens
+      run: |
+        protect header-goldens
+        cd source
+        if [ -f test/shared/header_visual_test.dart ]; then
+          flutter test --no-pub --dart-define=HEADER_GOLDENS=true test/shared/header_visual_test.dart --reporter expanded
+        fi
+      timeout-minutes: 5
+  version:
+    runs-on: ubuntu-latest
+    needs:
+    - resolve
+    - test
+    - header
+    timeout-minutes: 20
+    env:
+      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
+      SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - *ci_setup
+    - uses: subosito/flutter-action@v2
+      timeout-minutes: 10
+      with:
+        flutter-version: ${{ needs.resolve.outputs.flutter_version }}
+        channel: stable
+        cache: false
+    - name: 统一准备版本及净化摘要
+      run: |
+        protect version-and-summary
+        checkout_source
+        if parent="$(metadata_parent "$omm_head")"; then
+          [[ "$parent" == "$SOURCE_SHA" ]]
+          git -C source checkout --quiet --detach "$omm_head"
+        else
+          [[ "$omm_head" == "$SOURCE_SHA" ]]
+          message="$(git -C source show -s --format=%B "$SOURCE_SHA")"
+          version="$(cd source; env -u MOBILE_APP_SOURCE_TOKEN -u GH_TOKEN dart tool/bump_app_version.dart --auto --commit-message "$message")"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+          git -C source config user.name 'github-actions[bot]'
+          git -C source config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C source add pubspec.yaml
+          git -C source commit --quiet -m "chore: bump build metadata to $version [skip ci]" -m "Build-Source-SHA: $SOURCE_SHA"
+          [[ "$(metadata_parent HEAD)" == "$SOURCE_SHA" ]]
+          git_auth -C source push --quiet "--force-with-lease=refs/heads/$SOURCE_BRANCH:$SOURCE_SHA" origin "HEAD:refs/heads/$SOURCE_BRANCH"
+        fi
+        build_sha="$(git -C source rev-parse HEAD)"
+        version="$(sed -n 's/^version: //p' source/pubspec.yaml | tr -d '\r')"
+        [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+        mkdir release-metadata
+        for platform in android ios; do
+          tag=latest-android
+          if [ "$platform" = ios ]; then tag=latest; fi
+          if [ "$SOURCE_BRANCH" = dev ]; then
+            tag=latest-android-dev
+            if [ "$platform" = ios ]; then tag=latest-ios-dev; fi
+          fi
+          release="$(get_release KleinerSource/omm_app "$tag" "$GH_TOKEN")"
+          body="$(printf '%s' "$release" | jq -r '.body // ""')"
+          base="$(printf '%s' "$body" | sed -nE 's/^commit: ([0-9a-f]{40})$/\1/p')"
+          if [ "$base" = "$SOURCE_SHA" ]; then
+            # 重跑复用既有摘要，保证同一版本的内嵌日志和说明一致。
+            printf '%s\n' "$body" | sed -n '/^本次构建包含以下更新：$/,$p' | sed '1d;/^commit: /d;/^run: /d' > "release-metadata/$platform.txt"
+            continue
+          fi
+          if [ "$release" = null ]; then
+            previous="$(get_release KleinerSource/mobile_app "$tag" "$MOBILE_APP_SOURCE_TOKEN")"
+            base="$(printf '%s' "$previous" | jq -r '.target_commitish // ""')"
+          fi
+          args=(--version "$version" --head-sha "$SOURCE_SHA" --summary-only \
+            --output "$RUNNER_TEMP/changelog-$platform.dart" --notes-output "$GITHUB_WORKSPACE/release-metadata/$platform.txt")
+          if [[ "$base" =~ ^[0-9a-f]{40}$ ]]; then args+=(--base-sha "$base"); fi
+          (cd source; env -u MOBILE_APP_SOURCE_TOKEN -u GH_TOKEN dart tool/generate_build_changelog.dart "${args[@]}")
+        done
+        printf 'build_sha=%s\nversion=%s\n' "$build_sha" "$version" >> "$GITHUB_OUTPUT"
+      id: version
+      env:
+        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+      timeout-minutes: 5
+    - uses: actions/upload-artifact@v7
+      with:
+        name: release-metadata-${{ github.run_id }}
+        path: release-metadata/*.txt
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    outputs:
+      build_sha: ${{ steps.version.outputs.build_sha }}
+      version: ${{ steps.version.outputs.version }}
+  android:
+    runs-on: ubuntu-latest
+    needs:
+    - resolve
+    - version
+    timeout-minutes: 75
+    env:
+      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
+      SOURCE_SHA: ${{ needs.version.outputs.build_sha }}
+      APP_VERSION: ${{ needs.version.outputs.version }}
+      ABI_NAME: ${{ matrix.abi }}
+      BUILD_PLATFORM: android
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - *ci_setup
+    - uses: actions/setup-java@v6
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: subosito/flutter-action@v2
+      timeout-minutes: 10
+      with:
+        flutter-version: ${{ needs.resolve.outputs.flutter_version }}
+        channel: stable
+        cache: false
+    - name: 拉取固定私有提交
+      run: |
+        protect source-checkout
+        check_input
+        checkout_source
+      env:
+        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
+      timeout-minutes: 5
+    - uses: actions/download-artifact@v8
+      with:
+        name: release-metadata-${{ github.run_id }}
+        path: release-metadata
+    - name: android-sdk
+      run: |
+        protect android-sdk
+        cd source
+        bash tool/ci_android_sdk.sh
+      timeout-minutes: 15
+    - name: android-bootstrap
+      run: |
+        protect android-bootstrap
+        cd source
+        if [ -f tool/prepare_native.dart ]; then
+          dart tool/prepare_native.dart bootstrap android
+        else
+          bash tool/ci_native_android.sh bootstrap
+        fi
+      timeout-minutes: 5
+    - name: pub-get
+      run: |
+        protect pub-get
+        cd source
+        flutter pub get
+      timeout-minutes: 5
+    - name: android-configure
+      run: |
+        protect android-configure
+        cd source
+        if [ -f tool/prepare_native.dart ]; then
+          dart tool/prepare_native.dart configure android
+        else
+          bash tool/ci_native_android.sh configure
+        fi
+      timeout-minutes: 3
+    - name: 配置固定发布证书
+      run: |
+        protect android-signing
+        for key in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do test -n "${!key}"; done
+        printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > source/android/app/release.keystore
+        printf '%s\n' 'storeFile=app/release.keystore' "storePassword=$ANDROID_KEYSTORE_PASSWORD" \
+          "keyAlias=$ANDROID_KEY_ALIAS" "keyPassword=$ANDROID_KEY_PASSWORD" > source/android/key.properties
+        chmod 600 source/android/app/release.keystore source/android/key.properties
+      env:
+        ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    - name: 写入同一份净化摘要
+      run: |
+        protect embed-summary
+        cd source
+        dart tool/generate_build_changelog.dart --version "$APP_VERSION" --notes-file "../release-metadata/$BUILD_PLATFORM.txt"
+    - name: code-generation
+      run: |
+        protect code-generation
+        cd source
+        dart run build_runner build
+      timeout-minutes: 10
+    - name: android-compile
+      run: |
+        protect android-compile
+        [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+        case "$ABI_NAME" in
+          arm64) target=android-arm64; abi=arm64-v8a ;;
+          arm32) target=android-arm; abi=armeabi-v7a ;;
+          *) exit 1 ;;
+        esac
+        args=(flutter build apk --release --no-pub --build-name "${APP_VERSION%+*}" --build-number "${APP_VERSION##*+}" \
+          --target-platform "$target" --android-project-arg "targetAbi=$abi")
+        if [ "$SOURCE_BRANCH" = dev ]; then args+=(--dart-define=BUILD_CHANNEL=dev); fi
+        cd source
+        "${args[@]}"
+      timeout-minutes: 45
+    - name: 校验 ABI、隐私与签名
+      run: |
+        protect android-package-validation
+        [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+        package=source/build/app/outputs/flutter-apk/app-release.apk
+        case "$ABI_NAME" in
+          arm64) abi=arm64-v8a; suffix= ;;
+          arm32) abi=armeabi-v7a; suffix=_arm32 ;;
+          *) exit 1 ;;
+        esac
+        omm_label=android-abi
+        abis="$(unzip -Z1 "$package" | sed -n 's@^lib/\([^/]*\)/.*@\1@p' | sort -u)"
+        [[ "$abis" == "$abi" ]]
+        scan="$(mktemp -d "${BASH_ENV%/*}/omm-scan.XXXXXX")"
+        unzip -q "$package" -d "$scan"
+        omm_label=android-privacy
+        if grep -R -a -q -i -E 'KleinerSource|KleinerSource@me\.com|github\.com/KleinerSource' "$scan"; then exit 1; fi
+        omm_label=android-file-policy
+        if unzip -Z1 "$package" | grep -Ei '(\.dSYM/|\.git/|\.(dart|java|kt|swift|c|cpp|h|py|map|pdb|symbols)$)'; then exit 1; fi
+        rm -rf "$scan"
+        omm_label=android-certificate
+        sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+        signer="$(find "$sdk/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+        omm_label=android-signature-validation
+        "$signer" verify --print-certs --print-certs-pem "$package" > "$RUNNER_TEMP/apk-certificate.txt"
+        digest="$(openssl x509 -in "$RUNNER_TEMP/apk-certificate.txt" -outform DER | sha256sum | cut -d ' ' -f 1)"
+        omm_label=android-certificate-export
+        keytool -exportcert -keystore source/android/app/release.keystore -alias "$ANDROID_KEY_ALIAS" \
+          -storepass:env ANDROID_KEYSTORE_PASSWORD -file "$RUNNER_TEMP/release.der"
+        omm_label=android-certificate-match
+        [[ "$digest" == "$(sha256sum "$RUNNER_TEMP/release.der" | cut -d ' ' -f 1)" ]]
+        omm_label=android-artifact
+        prefix=omm
+        if [ "$SOURCE_BRANCH" = dev ]; then prefix=omm_dev; fi
+        mkdir -p release-assets
+        name="${prefix}_${APP_VERSION}${suffix}.apk"
+        cp "$package" "release-assets/$name"
+        echo "path=release-assets/$name" >> "$GITHUB_OUTPUT"
+      id: package
+      env:
+        ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+    - name: 移除签名文件
+      run: |
+        rm -f source/android/app/release.keystore source/android/key.properties
+      if: always()
+    - uses: actions/upload-artifact@v7
+      with:
+        name: android-${{ matrix.abi }}-${{ github.run_id }}
+        path: ${{ steps.package.outputs.path }}
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+    strategy:
+      fail-fast: false
+      matrix:
+        abi:
+        - arm64
+        - arm32
+  ios:
+    runs-on: macos-26
+    needs:
+    - resolve
+    - version
+    timeout-minutes: 75
+    env:
+      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
+      SOURCE_SHA: ${{ needs.version.outputs.build_sha }}
+      APP_VERSION: ${{ needs.version.outputs.version }}
+      CI: 'true'
+      COCOAPODS_DISABLE_STATS: 'true'
+      KSPLAYER_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
+      KSPLAYER_COMMIT: ${{ needs.resolve.outputs.source_branch == 'dev' && '0b70643ba10a7a840cf3436b97be233ff52da474' || 'c34287a220e629e5e796723ffa261d727dbcd7d4'
+        }}
+      FFMPEGKIT_REPOSITORY: https://github.com/kingslay/FFmpegKit.git
+      FFMPEGKIT_VERSION: 6.1.4
+      DISPLAYCRITERIA_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
+      DISPLAYCRITERIA_COMMIT: ${{ needs.resolve.outputs.source_branch == 'dev' && '0b70643ba10a7a840cf3436b97be233ff52da474' || 'c34287a220e629e5e796723ffa261d727dbcd7d4'
+        }}
+      LIBASS_REPOSITORY: https://github.com/kingslay/FFmpegKit.git
+      LIBASS_VERSION: 6.1.4
+      BUILD_PLATFORM: ios
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - *ci_setup
+    - uses: subosito/flutter-action@v2
+      timeout-minutes: 10
+      with:
+        flutter-version: ${{ needs.resolve.outputs.flutter_version }}
+        channel: stable
+        cache: false
+    - name: 拉取固定私有提交
+      run: |
+        protect source-checkout
+        check_input
+        checkout_source
+      env:
+        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
+      timeout-minutes: 5
+    - uses: actions/download-artifact@v8
+      with:
+        name: release-metadata-${{ github.run_id }}
+        path: release-metadata
+    - name: ios-bootstrap
+      run: |
+        protect ios-bootstrap
+        cd source
+        if [ -f tool/prepare_native.dart ]; then
+          dart tool/prepare_native.dart bootstrap ios
+        else
+          bash tool/ci_native_ios.sh bootstrap
+        fi
+      timeout-minutes: 5
+    - name: pub-get
+      run: |
+        protect pub-get
+        cd source
+        flutter pub get
+      timeout-minutes: 5
+    - name: ios-configure
+      run: |
+        protect ios-configure
+        cd source
+        if [ -f tool/prepare_native.dart ]; then
+          dart tool/prepare_native.dart configure ios
+        else
+          bash tool/ci_native_ios.sh configure
+        fi
+      timeout-minutes: 3
+    - name: cocoapods
+      run: |
+        protect cocoapods
+        cd source/ios
+        if [ -f Podfile ]; then pod install --repo-update; fi
+      timeout-minutes: 15
+    - name: 写入同一份净化摘要
+      run: |
+        protect embed-summary
+        cd source
+        dart tool/generate_build_changelog.dart --version "$APP_VERSION" --notes-file "../release-metadata/$BUILD_PLATFORM.txt"
+    - name: code-generation
+      run: |
+        protect code-generation
+        cd source
+        dart run build_runner build
+      timeout-minutes: 10
+    - name: ios-compile
+      run: |
+        protect ios-compile
+        [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+        args=(flutter build ios --release --no-codesign --no-pub --build-name "${APP_VERSION%+*}" --build-number "${APP_VERSION##*+}")
+        if [ "$SOURCE_BRANCH" = dev ]; then args+=(--dart-define=BUILD_CHANNEL=dev); fi
+        cd source
+        "${args[@]}"
+      timeout-minutes: 30
+    - name: 校验 IPA 隐私与文件白名单
+      run: |
+        protect ios-package-validation
+        [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+        prefix=omm
+        if [ "$SOURCE_BRANCH" = dev ]; then prefix=omm_dev; fi
+        name="${prefix}_${APP_VERSION}.ipa"
+        find source/build/ios/iphoneos/Runner.app/Frameworks -type d -name Headers -prune -exec rm -rf {} +
+        (cd source/build/ios/iphoneos; mkdir Payload; cp -R Runner.app Payload/; zip -qry "$name" Payload)
+        package="source/build/ios/iphoneos/$name"
+        scan="$(mktemp -d "${BASH_ENV%/*}/omm-scan.XXXXXX")"
+        unzip -q "$package" -d "$scan"
+        omm_label=ios-privacy
+        if grep -R -a -q -i -E 'KleinerSource|KleinerSource@me\.com|github\.com/KleinerSource' "$scan"; then exit 1; fi
+        omm_label=ios-file-policy
+        if unzip -Z1 "$package" | grep -Ei '(\.dSYM/|\.git/|\.(dart|java|kt|swift|c|cpp|h|py|map|pdb|symbols)$)'; then exit 1; fi
+        rm -rf "$scan"
+        omm_label=ios-artifact
+        mkdir -p release-assets
+        cp "$package" "release-assets/$name"
+        echo "path=release-assets/$name" >> "$GITHUB_OUTPUT"
+      id: package
+    - uses: actions/upload-artifact@v7
+      with:
+        name: ios-${{ github.run_id }}
+        path: ${{ steps.package.outputs.path }}
+        if-no-files-found: error
+        retention-days: 14
+        overwrite: true
+  publish-android:
+    runs-on: ubuntu-latest
+    needs:
+    - resolve
+    - version
+    - android
+    timeout-minutes: 10
+    env:
+      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
+      SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+      APP_VERSION: ${{ needs.version.outputs.version }}
+      BUILD_SHA: ${{ needs.version.outputs.build_sha }}
+      BUILD_PLATFORM: android
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - *ci_setup
+    - uses: actions/download-artifact@v8
+      with:
+        name: release-metadata-${{ github.run_id }}
+        path: release-metadata
+    - uses: actions/download-artifact@v8
+      with:
+        path: release-assets
+        pattern: android-*-${{ github.run_id }}
+        merge-multiple: true
+    - &publish_release
+      name: 检查时效并发布指定安装包
+      run: |
+        protect publish
+        [[ "$GITHUB_REPOSITORY" == KleinerSource/omm_app && "$GITHUB_REF" == refs/heads/main ]]
+        check_input
+        [[ "$BUILD_SHA" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
+        prefix=omm
+        if [ "$SOURCE_BRANCH" = dev ]; then prefix=omm_dev; fi
+        case "$BUILD_PLATFORM" in
+          android) tag=latest-android; files=("release-assets/${prefix}_${APP_VERSION}.apk" "release-assets/${prefix}_${APP_VERSION}_arm32.apk") ;;
+          ios) tag=latest; files=("release-assets/${prefix}_${APP_VERSION}.ipa") ;;
+          *) exit 1 ;;
+        esac
+        if [ "$SOURCE_BRANCH" = dev ]; then
+          tag=latest-android-dev
+          if [ "$BUILD_PLATFORM" = ios ]; then tag=latest-ios-dev; fi
+        fi
+        [[ "$(find release-assets -mindepth 1 -maxdepth 1 | wc -l)" -eq "${#files[@]}" ]]
+        for file in "${files[@]}"; do test -f "$file" && test ! -L "$file"; done
+        notes="$RUNNER_TEMP/release-notes.md"
+        {
+          printf '版本: %s\n\n本次构建包含以下更新：\n\n' "$APP_VERSION"
+          cat "release-metadata/$BUILD_PLATFORM.txt"
+          printf '\ncommit: %s\nrun: https://github.com/%s/actions/runs/%s\n' \
+            "$SOURCE_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+        } > "$notes"
+        ensure_current() {
+          current="$(GH_TOKEN="$MOBILE_APP_SOURCE_TOKEN" gh api "repos/KleinerSource/mobile_app/git/ref/heads/$SOURCE_BRANCH" --jq .object.sha)"
+          [[ "$current" == "$BUILD_SHA" ]]
+        }
+        ensure_current
+        previous="$(get_release KleinerSource/omm_app "$tag" "$GH_TOKEN")"
+        title="Latest Android build"
+        if [ "$BUILD_PLATFORM" = ios ]; then title="Latest unsigned iOS build"; fi
+        if [ "$SOURCE_BRANCH" = dev ]; then title="${title% build} dev build"; fi
+        if [ "$previous" != null ]; then
+          ensure_current
+          gh release delete "$tag" --repo KleinerSource/omm_app --yes --cleanup-tag
+        fi
+        ensure_current
+        gh release create "$tag" "${files[@]}" --repo KleinerSource/omm_app --target main \
+          --title "$title" --prerelease --notes-file "$notes"
+      env:
+        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
+        GH_TOKEN: ${{ github.token }}
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.android.result == 'success' }}
+    permissions:
+      contents: write
+  publish-ios:
+    runs-on: ubuntu-latest
+    needs:
+    - resolve
+    - version
+    - ios
+    timeout-minutes: 10
+    env:
+      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
+      SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+      APP_VERSION: ${{ needs.version.outputs.version }}
+      BUILD_SHA: ${{ needs.version.outputs.build_sha }}
+      BUILD_PLATFORM: ios
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - *ci_setup
+    - uses: actions/download-artifact@v8
+      with:
+        name: release-metadata-${{ github.run_id }}
+        path: release-metadata
+    - uses: actions/download-artifact@v8
+      with:
+        path: release-assets
+        name: ios-${{ github.run_id }}
+    - *publish_release
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.ios.result == 'success' }}
+    permissions:
+      contents: write
+defaults:
+  run:
+    shell: bash
