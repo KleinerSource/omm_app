@@ -177,13 +177,11 @@ jobs:
       timeout-minutes: 10
     - name: analyze
       run: |
-        protect analyze
         cd source
         flutter analyze --no-pub
       timeout-minutes: 8
     - name: full-tests
       run: |
-        protect full-tests
         cd source
         flutter test --no-pub --reporter expanded
       timeout-minutes: 20
@@ -222,7 +220,6 @@ jobs:
       timeout-minutes: 5
     - name: header-goldens
       run: |
-        protect header-goldens
         cd source
         if [ -f test/shared/header_visual_test.dart ]; then
           flutter test --no-pub --dart-define=HEADER_GOLDENS=true test/shared/header_visual_test.dart --reporter expanded
