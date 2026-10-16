@@ -13,17 +13,23 @@ native_output="${GITHUB_WORKSPACE}/source/build/ios-native"
 rm -rf "$components_root"
 mkdir -p "$components_root"
 
-git_args=()
 if [[ -n "${COMPONENTS_TOKEN:-}" ]]; then
   auth="$(printf 'x-access-token:%s' "$COMPONENTS_TOKEN" | base64 | tr -d '\r\n')"
-  git_args=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth")
 fi
+
+git_with_components_auth() {
+  if [[ -n "${COMPONENTS_TOKEN:-}" ]]; then
+    command git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" "$@"
+  else
+    command git "$@"
+  fi
+}
 
 checkout_component() {
   local name="$1" repository="$2" commit="$3"
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-  git "${git_args[@]}" clone --filter=blob:none --no-checkout --quiet "$repository" "$components_root/$name"
-  git "${git_args[@]}" -C "$components_root/$name" fetch --quiet origin "$commit"
+  git_with_components_auth clone --filter=blob:none --no-checkout --quiet "$repository" "$components_root/$name"
+  git_with_components_auth -C "$components_root/$name" fetch --quiet origin "$commit"
   git -C "$components_root/$name" checkout --quiet --detach "$commit"
   [[ "$(git -C "$components_root/$name" rev-parse HEAD)" == "$commit" ]]
 }
