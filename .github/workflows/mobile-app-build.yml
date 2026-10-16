@@ -491,15 +491,13 @@ jobs:
       CI: 'true'
       COCOAPODS_DISABLE_STATS: 'true'
       KSPLAYER_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
-      KSPLAYER_COMMIT: 77fd5e3117d8973e9a285e862c5498ed67f78a49
-      FFMPEG_REPOSITORY: https://github.com/KleinerSource/FFmpeg.git
-      FFMPEG_COMMIT: 904720ead5e74e4ef4ba1b79b64a2bd90fa6ab0b
+      KSPLAYER_BRANCH: main
       FFMPEGKIT_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
-      FFMPEGKIT_COMMIT: e75698512fee31df0075bad9d35a4517de576d19
+      FFMPEGKIT_BRANCH: main
       DISPLAYCRITERIA_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
-      DISPLAYCRITERIA_COMMIT: 77fd5e3117d8973e9a285e862c5498ed67f78a49
+      DISPLAYCRITERIA_BRANCH: main
       LIBASS_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
-      LIBASS_COMMIT: e75698512fee31df0075bad9d35a4517de576d19
+      LIBASS_BRANCH: main
       BUILD_PLATFORM: ios
     steps:
     - uses: actions/checkout@v7
@@ -529,27 +527,22 @@ jobs:
         python-version: '3.12'
     - name: 计算 iOS 原生依赖缓存键
       id: native-cache-key
-      run: |
-        set -euo pipefail
-        digest="$({
-          cat .github/scripts/build_ios_native.sh .github/workflows/mobile-app-build.yml
-          printf '%s\n' "$SOURCE_SHA" "$KSPLAYER_COMMIT" "$FFMPEG_COMMIT" "$FFMPEGKIT_COMMIT"
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-          xcrun --sdk iphonesimulator --show-sdk-version
-        } | shasum -a 256 | cut -d ' ' -f 1)"
-        echo "key=$digest" >> "$GITHUB_OUTPUT"
+      run: bash .github/scripts/build_ios_native.sh plan
+      env:
+        COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
+      timeout-minutes: 10
     - uses: actions/cache@v5
       id: ios-native-cache
       with:
         path: source/build/ios-native
-        key: ios-native-${{ runner.os }}-${{ steps.native-cache-key.outputs.key }}
-    - name: 构建固定 iOS FFmpeg 8.1 与 KSPlayer 源码
-      if: steps.ios-native-cache.outputs.cache-hit != 'true'
+        key: ios-native-${{ runner.os }}-${{ steps.native-cache-key.outputs.cache_key }}
+    - name: 准备最新播放器组件并构建 iOS FFmpeg 8.1
       run: |
-        bash .github/scripts/build_ios_native.sh
+        bash .github/scripts/build_ios_native.sh build
       env:
         COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
+        KSPLAYER_REVISION: ${{ steps.native-cache-key.outputs.ksplayer_revision }}
+        FFMPEGKIT_REVISION: ${{ steps.native-cache-key.outputs.ffmpegkit_revision }}
       timeout-minutes: 55
     - name: 校验并导出 iOS 原生 Pod 路径
       run: |
