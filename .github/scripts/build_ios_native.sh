@@ -49,12 +49,9 @@ checkout_component() {
 if [[ "$mode" == plan ]]; then
   KSPLAYER_REVISION="$(latest_revision "$KSPLAYER_REPOSITORY" "$KSPLAYER_BRANCH")"
   FFMPEGKIT_REVISION="$(latest_revision "$FFMPEGKIT_REPOSITORY" "$FFMPEGKIT_BRANCH")"
-  checkout_component KSPlayer "$KSPLAYER_REPOSITORY" "$KSPLAYER_BRANCH" "$KSPLAYER_REVISION"
-  checkout_component FFmpegKit "$FFMPEGKIT_REPOSITORY" "$FFMPEGKIT_BRANCH" "$FFMPEGKIT_REVISION"
-  identity="$(python3 "$components_root/FFmpegKit/iOSNative/build.py" release-key \
-    --components-dir "$components_root")"
-  RELEASE_TAG="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["tag"])' <<< "$identity")"
-  [[ "$RELEASE_TAG" =~ ^ios-native-[0-9a-f]{64}$ ]]
+  RELEASE_TAG="$(python3 .github/scripts/find_ios_native_release.py \
+    "$KSPLAYER_REVISION" "$FFMPEGKIT_REVISION")"
+  [[ -z "$RELEASE_TAG" || "$RELEASE_TAG" =~ ^ios-native-[0-9a-f]{64}$ ]]
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
       printf 'ksplayer_revision=%s\n' "$KSPLAYER_REVISION"
@@ -75,21 +72,17 @@ fi
 
 : "${KSPLAYER_REVISION:?KSPLAYER_REVISION is required}"
 : "${FFMPEGKIT_REVISION:?FFMPEGKIT_REVISION is required}"
-: "${RELEASE_TAG:?RELEASE_TAG is required}"
-: "${COMPONENTS_TOKEN:?COMPONENTS_TOKEN is required to read and dispatch component Releases}"
 checkout_component KSPlayer "$KSPLAYER_REPOSITORY" "$KSPLAYER_BRANCH" "$KSPLAYER_REVISION"
 checkout_component FFmpegKit "$FFMPEGKIT_REPOSITORY" "$FFMPEGKIT_BRANCH" "$FFMPEGKIT_REVISION"
 
-identity="$(python3 "$components_root/FFmpegKit/iOSNative/build.py" release-key \
-  --components-dir "$components_root")"
-[[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["tag"])' <<< "$identity")" == "$RELEASE_TAG" ]]
-
-if ! gh release view "$RELEASE_TAG" --repo KleinerSource/FFmpegKit >/dev/null 2>&1; then
+RELEASE_TAG="$(python3 .github/scripts/find_ios_native_release.py \
+  "$KSPLAYER_REVISION" "$FFMPEGKIT_REVISION")"
+if [[ -z "$RELEASE_TAG" ]]; then
+  : "${COMPONENTS_TOKEN:?No source-matched FFmpegKit Release exists; configure COMPONENTS_TOKEN to build one}"
   dispatch_epoch="$(date -u +%s)"
   gh workflow run ios-native.yml --repo KleinerSource/FFmpegKit --ref main \
     -f "ffmpegkit_revision=$FFMPEGKIT_REVISION" \
-    -f "ksplayer_revision=$KSPLAYER_REVISION" \
-    -f "expected_release_tag=$RELEASE_TAG"
+    -f "ksplayer_revision=$KSPLAYER_REVISION"
 
   run_id=""
   for attempt in {1..60}; do
@@ -103,9 +96,9 @@ if ! gh release view "$RELEASE_TAG" --repo KleinerSource/FFmpegKit >/dev/null 2>
   [[ -n "$run_id" ]] || { echo '无法定位触发的 FFmpegKit Release 构建' >&2; exit 1; }
 
   deadline=$((SECONDS + 5400))
-  until gh release view "$RELEASE_TAG" --repo KleinerSource/FFmpegKit >/dev/null 2>&1; do
+  until [[ -n "$RELEASE_TAG" ]]; do
     if (( SECONDS >= deadline )); then
-      echo "等待组件 Release 超时: $RELEASE_TAG" >&2
+      echo "等待组件 Release 超时: KSPlayer=$KSPLAYER_REVISION FFmpegKit=$FFMPEGKIT_REVISION" >&2
       gh run view "$run_id" --repo KleinerSource/FFmpegKit --json status,conclusion,url >&2 || true
       exit 1
     fi
@@ -117,19 +110,24 @@ if ! gh release view "$RELEASE_TAG" --repo KleinerSource/FFmpegKit >/dev/null 2>
       exit 1
     fi
     sleep 15
+    RELEASE_TAG="$(python3 .github/scripts/find_ios_native_release.py \
+      "$KSPLAYER_REVISION" "$FFMPEGKIT_REVISION" || true)"
   done
 fi
 
+[[ "$RELEASE_TAG" =~ ^ios-native-[0-9a-f]{64}$ ]]
 download_dir="$(mktemp -d "${RUNNER_TEMP}/omm-ios-release.XXXXXX")"
 staging_dir="$(mktemp -d "${RUNNER_TEMP}/omm-ios-pods.XXXXXX")"
-gh release download "$RELEASE_TAG" --repo KleinerSource/FFmpegKit \
-  --pattern ios-native-pods.zip --pattern ios-native-pods.zip.sha256 \
-  --pattern release-manifest.json --dir "$download_dir"
+release_url="https://github.com/KleinerSource/FFmpegKit/releases/download/$RELEASE_TAG"
+for asset in ios-native-pods.zip ios-native-pods.zip.sha256 release-manifest.json; do
+  curl --fail --silent --show-error --location --max-time 600 \
+    "$release_url/$asset" --output "$download_dir/$asset"
+done
 (cd "$download_dir" && shasum -a 256 -c ios-native-pods.zip.sha256)
 
 python3 .github/scripts/verify_ios_native_release.py \
   "$download_dir/ios-native-pods.zip" "$download_dir/release-manifest.json" \
-  "$identity" "$KSPLAYER_REVISION" "$FFMPEGKIT_REVISION"
+  "$RELEASE_TAG" "$KSPLAYER_REVISION" "$FFMPEGKIT_REVISION"
 
 unzip -q "$download_dir/ios-native-pods.zip" -d "$staging_dir"
 for artifact in \

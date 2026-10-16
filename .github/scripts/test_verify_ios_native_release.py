@@ -59,14 +59,20 @@ class ReleaseVerificationTests(unittest.TestCase):
                 archive.writestr(path, plistlib.dumps((overrides or {}).get(name, info)))
 
     def test_accepts_matching_source_and_all_required_slices(self):
-        verify_release.verify(self.archive_path, self.manifest_path, self.identity,
+        verify_release.verify(self.archive_path, self.manifest_path, self.identity["tag"],
+                              self.identity["ksplayer_revision"], self.identity["ffmpegkit_revision"])
+
+    def test_accepts_source_matched_release_with_a_different_build_cache_key(self):
+        self.manifest["fingerprint"]["native_cache_key"] = "c" * 64
+        self.write_archive()
+        verify_release.verify(self.archive_path, self.manifest_path, self.identity["tag"],
                               self.identity["ksplayer_revision"], self.identity["ffmpegkit_revision"])
 
     def test_rejects_stale_component_fingerprint(self):
         self.manifest["fingerprint"]["ksplayer_revision"] = "c" * 40
         self.write_archive()
-        with self.assertRaisesRegex(ValueError, "指纹"):
-            verify_release.verify(self.archive_path, self.manifest_path, self.identity,
+        with self.assertRaisesRegex(ValueError, "KSPlayer 提交"):
+            verify_release.verify(self.archive_path, self.manifest_path, self.identity["tag"],
                                   self.identity["ksplayer_revision"], self.identity["ffmpegkit_revision"])
 
     def test_rejects_missing_simulator_architecture(self):
@@ -77,7 +83,7 @@ class ReleaseVerificationTests(unittest.TestCase):
         ]}
         self.write_archive({"KSPlayer": bad_info})
         with self.assertRaisesRegex(ValueError, "KSPlayer 缺少模拟器"):
-            verify_release.verify(self.archive_path, self.manifest_path, self.identity,
+            verify_release.verify(self.archive_path, self.manifest_path, self.identity["tag"],
                                   self.identity["ksplayer_revision"], self.identity["ffmpegkit_revision"])
 
 

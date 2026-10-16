@@ -518,16 +518,11 @@ jobs:
       with:
         name: release-metadata-${{ github.run_id }}
         path: release-metadata
-    - name: 安装组件指纹工具链
-      run: |
-        brew install autoconf automake libtool pkg-config cmake meson ninja nasm texinfo cocoapods
-        echo "$(brew --prefix texinfo)/bin" >> "$GITHUB_PATH"
-      timeout-minutes: 15
     - uses: actions/setup-python@v6
       with:
-        python-version: '3.13'
-    - name: 解析最新组件源码和 Release 指纹
-      id: native-release-key
+        python-version: '3.12'
+    - name: 解析最新组件提交与源码匹配 Release
+      id: native-release-plan
       run: bash .github/scripts/build_ios_native.sh plan
       env:
         COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
@@ -537,9 +532,8 @@ jobs:
       run: bash .github/scripts/build_ios_native.sh release
       env:
         COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
-        KSPLAYER_REVISION: ${{ steps.native-release-key.outputs.ksplayer_revision }}
-        FFMPEGKIT_REVISION: ${{ steps.native-release-key.outputs.ffmpegkit_revision }}
-        RELEASE_TAG: ${{ steps.native-release-key.outputs.release_tag }}
+        KSPLAYER_REVISION: ${{ steps.native-release-plan.outputs.ksplayer_revision }}
+        FFMPEGKIT_REVISION: ${{ steps.native-release-plan.outputs.ffmpegkit_revision }}
       timeout-minutes: 95
     - name: 校验并导出 iOS 原生 Pod 路径
       run: |
@@ -599,9 +593,9 @@ jobs:
       uses: actions/cache@v5
       with:
         path: source/build/ios
-        key: ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release-key.outputs.release_tag }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-${{ env.SOURCE_SHA }}-${{ env.APP_VERSION }}
+        key: ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release.outputs.release_tag }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-${{ env.SOURCE_SHA }}-${{ env.APP_VERSION }}
         restore-keys: |
-          ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release-key.outputs.release_tag }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-
+          ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release.outputs.release_tag }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-
     - name: ios-compile
       run: |
         protect ios-compile

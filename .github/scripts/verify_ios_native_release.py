@@ -25,22 +25,28 @@ for name in (
     FRAMEWORKS[name] = f"pods/FFmpegKit/Frameworks/{name}.xcframework/Info.plist"
 
 
-def verify(archive_path, manifest_path, identity, ksplayer_revision, ffmpegkit_revision):
+def verify(archive_path, manifest_path, release_tag, ksplayer_revision, ffmpegkit_revision):
     with zipfile.ZipFile(archive_path) as archive:
         manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
         embedded_manifest = json.loads(archive.read("release-manifest.json"))
         if embedded_manifest != manifest:
             raise ValueError("Release 外部清单与归档内清单不一致")
-        if manifest.get("tag") != identity.get("tag"):
-            raise ValueError("Release 标签与当前源码指纹不匹配")
+        if manifest.get("tag") != release_tag:
+            raise ValueError("Release 清单标签与下载标签不匹配")
         fingerprint = manifest.get("fingerprint", {})
-        for key in ("ffmpegkit_revision", "ksplayer_revision", "native_cache_key"):
-            if fingerprint.get(key) != identity.get(key):
-                raise ValueError(f"Release 指纹字段不匹配: {key}")
         if fingerprint.get("ksplayer_revision") != ksplayer_revision:
             raise ValueError("Release 中的 KSPlayer 提交与当前 main 不匹配")
         if fingerprint.get("ffmpegkit_revision") != ffmpegkit_revision:
             raise ValueError("Release 中的 FFmpegKit 提交与当前 main 不匹配")
+        sources = manifest.get("sources", {})
+        for component, expected in (
+            ("KSPlayer", ksplayer_revision),
+            ("DisplayCriteria", ksplayer_revision),
+            ("FFmpegKit", ffmpegkit_revision),
+            ("Libass", ffmpegkit_revision),
+        ):
+            if sources.get(component) != expected:
+                raise ValueError(f"Release 源码提交不匹配: {component}")
         if manifest.get("ffmpeg_version") != "n8.1":
             raise ValueError("Release FFmpeg 版本不是 n8.1")
         if manifest.get("libav_versions", {}).get("libavcodec") != "62.28.100":
@@ -74,8 +80,8 @@ def verify(archive_path, manifest_path, identity, ksplayer_revision, ffmpegkit_r
 
 def main():
     if len(sys.argv) != 6:
-        raise SystemExit("usage: verify_ios_native_release.py ZIP MANIFEST IDENTITY_JSON KSPLAYER_SHA FFMPEGKIT_SHA")
-    verify(sys.argv[1], sys.argv[2], json.loads(sys.argv[3]), sys.argv[4], sys.argv[5])
+        raise SystemExit("usage: verify_ios_native_release.py ZIP MANIFEST RELEASE_TAG KSPLAYER_SHA FFMPEGKIT_SHA")
+    verify(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
 
 
 if __name__ == "__main__":
