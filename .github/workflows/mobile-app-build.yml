@@ -603,6 +603,11 @@ jobs:
         cd source
         "${args[@]}"
       timeout-minutes: 30
+    - name: Verify KSPlayer FFmpeg linkage
+      run: |
+        if [ -f source/tool/verify_ios_ffmpeg_linkage.py ]; then
+          python3 source/tool/verify_ios_ffmpeg_linkage.py source/build/ios/iphoneos/Runner.app/Runner
+        fi
     - name: 校验 IPA 隐私与文件白名单
       run: |
         protect ios-package-validation
