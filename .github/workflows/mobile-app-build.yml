@@ -491,15 +491,15 @@ jobs:
       CI: 'true'
       COCOAPODS_DISABLE_STATS: 'true'
       KSPLAYER_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
-      KSPLAYER_COMMIT: ${{ needs.resolve.outputs.source_branch == 'dev' && '0b70643ba10a7a840cf3436b97be233ff52da474' || 'c34287a220e629e5e796723ffa261d727dbcd7d4'
-        }}
-      FFMPEGKIT_REPOSITORY: https://github.com/kingslay/FFmpegKit.git
-      FFMPEGKIT_VERSION: 6.1.4
+      KSPLAYER_COMMIT: 57308156f6dd977ce308b68aca37066e175b92c5
+      FFMPEG_REPOSITORY: https://github.com/KleinerSource/FFmpeg.git
+      FFMPEG_COMMIT: 904720ead5e74e4ef4ba1b79b64a2bd90fa6ab0b
+      FFMPEGKIT_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
+      FFMPEGKIT_COMMIT: 831cd21b285498b7beb49d868824d75198049b68
       DISPLAYCRITERIA_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
-      DISPLAYCRITERIA_COMMIT: ${{ needs.resolve.outputs.source_branch == 'dev' && '0b70643ba10a7a840cf3436b97be233ff52da474' || 'c34287a220e629e5e796723ffa261d727dbcd7d4'
-        }}
-      LIBASS_REPOSITORY: https://github.com/kingslay/FFmpegKit.git
-      LIBASS_VERSION: 6.1.4
+      DISPLAYCRITERIA_COMMIT: 57308156f6dd977ce308b68aca37066e175b92c5
+      LIBASS_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
+      LIBASS_COMMIT: 831cd21b285498b7beb49d868824d75198049b68
       BUILD_PLATFORM: ios
     steps:
     - uses: actions/checkout@v7
@@ -524,6 +524,42 @@ jobs:
       with:
         name: release-metadata-${{ github.run_id }}
         path: release-metadata
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+        cache: pip
+    - name: 计算 iOS 原生依赖缓存键
+      id: native-cache-key
+      run: |
+        set -euo pipefail
+        digest="$({
+          cat .github/scripts/build_ios_native.sh .github/workflows/mobile-app-build.yml
+          printf '%s\n' "$SOURCE_SHA" "$KSPLAYER_COMMIT" "$FFMPEG_COMMIT" "$FFMPEGKIT_COMMIT"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-version
+        } | shasum -a 256 | cut -d ' ' -f 1)"
+        echo "key=$digest" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v5
+      id: ios-native-cache
+      with:
+        path: source/build/ios-native
+        key: ios-native-${{ runner.os }}-${{ steps.native-cache-key.outputs.key }}
+    - name: 构建固定 iOS FFmpeg 8.1 与 KSPlayer 源码
+      if: steps.ios-native-cache.outputs.cache-hit != 'true'
+      run: |
+        protect ios-native-build
+        bash .github/scripts/build_ios_native.sh
+      env:
+        COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
+      timeout-minutes: 55
+    - name: 校验并导出 iOS 原生 Pod 路径
+      run: |
+        protect ios-native-verify
+        test -f source/build/ios-native/pods/FFmpegKit/native-versions.json
+        grep -q '"ffmpeg_version": "n8.1"' source/build/ios-native/pods/FFmpegKit/native-versions.json
+        grep -q '"libavcodec": "62.28.100"' source/build/ios-native/pods/FFmpegKit/native-versions.json
+        printf 'IOS_NATIVE_PODS=%s\n' "$GITHUB_WORKSPACE/source/build/ios-native/pods" >> "$GITHUB_ENV"
     - name: ios-bootstrap
       run: |
         protect ios-bootstrap
