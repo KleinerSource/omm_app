@@ -495,11 +495,11 @@ jobs:
       FFMPEG_REPOSITORY: https://github.com/KleinerSource/FFmpeg.git
       FFMPEG_COMMIT: 904720ead5e74e4ef4ba1b79b64a2bd90fa6ab0b
       FFMPEGKIT_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
-      FFMPEGKIT_COMMIT: 831cd21b285498b7beb49d868824d75198049b68
+      FFMPEGKIT_COMMIT: 4b08bc954ca81bef554a904dab5a79f848133145
       DISPLAYCRITERIA_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
       DISPLAYCRITERIA_COMMIT: 57308156f6dd977ce308b68aca37066e175b92c5
       LIBASS_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
-      LIBASS_COMMIT: 831cd21b285498b7beb49d868824d75198049b68
+      LIBASS_COMMIT: 4b08bc954ca81bef554a904dab5a79f848133145
       BUILD_PLATFORM: ios
     steps:
     - uses: actions/checkout@v7

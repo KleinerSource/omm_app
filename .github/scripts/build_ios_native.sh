@@ -22,8 +22,8 @@ fi
 checkout_component() {
   local name="$1" repository="$2" commit="$3"
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-  "${git_args[@]}" git clone --filter=blob:none --no-checkout --quiet "$repository" "$components_root/$name"
-  "${git_args[@]}" git -C "$components_root/$name" fetch --quiet origin "$commit"
+  git "${git_args[@]}" clone --filter=blob:none --no-checkout --quiet "$repository" "$components_root/$name"
+  git "${git_args[@]}" -C "$components_root/$name" fetch --quiet origin "$commit"
   git -C "$components_root/$name" checkout --quiet --detach "$commit"
   [[ "$(git -C "$components_root/$name" rev-parse HEAD)" == "$commit" ]]
 }
