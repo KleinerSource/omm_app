@@ -2,6 +2,7 @@
 """Find a public FFmpegKit release built from the requested component commits."""
 
 import json
+import os
 import sys
 from urllib.request import Request, urlopen
 
@@ -10,10 +11,14 @@ RELEASES_URL = "https://api.github.com/repos/KleinerSource/FFmpegKit/releases?pe
 
 
 def fetch_json(url):
-    request = Request(url, headers={
+    headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "KleinerSource-omm-app-ci",
-    })
+    }
+    token = os.environ.get("GH_TOKEN") or os.environ.get("COMPONENTS_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = Request(url, headers=headers)
     with urlopen(request, timeout=30) as response:
         return json.load(response)
 
