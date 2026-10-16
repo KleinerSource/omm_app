@@ -518,9 +518,14 @@ jobs:
       with:
         name: release-metadata-${{ github.run_id }}
         path: release-metadata
+    - name: 安装组件指纹工具链
+      run: |
+        brew install autoconf automake libtool pkg-config cmake meson ninja nasm texinfo cocoapods
+        echo "$(brew --prefix texinfo)/bin" >> "$GITHUB_PATH"
+      timeout-minutes: 15
     - uses: actions/setup-python@v6
       with:
-        python-version: '3.12'
+        python-version: '3.13'
     - name: 解析最新组件源码和 Release 指纹
       id: native-release-key
       run: bash .github/scripts/build_ios_native.sh plan
