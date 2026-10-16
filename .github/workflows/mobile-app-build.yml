@@ -547,7 +547,6 @@ jobs:
     - name: 构建固定 iOS FFmpeg 8.1 与 KSPlayer 源码
       if: steps.ios-native-cache.outputs.cache-hit != 'true'
       run: |
-        protect ios-native-build
         bash .github/scripts/build_ios_native.sh
       env:
         COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
