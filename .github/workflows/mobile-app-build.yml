@@ -527,7 +527,6 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-        cache: pip
     - name: 计算 iOS 原生依赖缓存键
       id: native-cache-key
       run: |
