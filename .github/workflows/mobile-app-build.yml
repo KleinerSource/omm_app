@@ -539,7 +539,6 @@ jobs:
       timeout-minutes: 95
     - name: 校验并导出 iOS 原生 Pod 路径
       run: |
-        protect ios-native-verify
         test -f source/build/ios-native/pods/FFmpegKit/native-versions.json
         test -f source/build/ios-native/pods/KSPlayer/Frameworks/KSPlayer.xcframework/Info.plist
         test -f source/build/ios-native/pods/KSPlayer/Frameworks/DisplayCriteria.xcframework/Info.plist
@@ -549,7 +548,6 @@ jobs:
         printf 'IOS_NATIVE_PODS=%s\n' "$GITHUB_WORKSPACE/source/build/ios-native/pods" >> "$GITHUB_ENV"
     - name: ios-bootstrap
       run: |
-        protect ios-bootstrap
         cd source
         if [ -f tool/prepare_native.dart ]; then
           dart tool/prepare_native.dart bootstrap ios
@@ -575,7 +573,6 @@ jobs:
       timeout-minutes: 3
     - name: cocoapods
       run: |
-        protect cocoapods
         cd source/ios
         if [ -f Podfile ]; then pod install --repo-update; fi
       timeout-minutes: 15
