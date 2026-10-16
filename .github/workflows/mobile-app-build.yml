@@ -597,7 +597,6 @@ jobs:
           ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release.outputs.release_tag }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-
     - name: ios-compile
       run: |
-        protect ios-compile
         [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
         args=(flutter build ios --release --no-codesign --no-pub --build-name "${APP_VERSION%+*}" --build-number "${APP_VERSION##*+}")
         if [ "$SOURCE_BRANCH" = dev ]; then args+=(--dart-define=BUILD_CHANNEL=dev); fi
