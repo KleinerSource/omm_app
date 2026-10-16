@@ -491,15 +491,15 @@ jobs:
       CI: 'true'
       COCOAPODS_DISABLE_STATS: 'true'
       KSPLAYER_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
-      KSPLAYER_COMMIT: 57308156f6dd977ce308b68aca37066e175b92c5
+      KSPLAYER_COMMIT: 77fd5e3117d8973e9a285e862c5498ed67f78a49
       FFMPEG_REPOSITORY: https://github.com/KleinerSource/FFmpeg.git
       FFMPEG_COMMIT: 904720ead5e74e4ef4ba1b79b64a2bd90fa6ab0b
       FFMPEGKIT_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
-      FFMPEGKIT_COMMIT: 4b08bc954ca81bef554a904dab5a79f848133145
+      FFMPEGKIT_COMMIT: e75698512fee31df0075bad9d35a4517de576d19
       DISPLAYCRITERIA_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
-      DISPLAYCRITERIA_COMMIT: 57308156f6dd977ce308b68aca37066e175b92c5
+      DISPLAYCRITERIA_COMMIT: 77fd5e3117d8973e9a285e862c5498ed67f78a49
       LIBASS_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
-      LIBASS_COMMIT: 4b08bc954ca81bef554a904dab5a79f848133145
+      LIBASS_COMMIT: e75698512fee31df0075bad9d35a4517de576d19
       BUILD_PLATFORM: ios
     steps:
     - uses: actions/checkout@v7
