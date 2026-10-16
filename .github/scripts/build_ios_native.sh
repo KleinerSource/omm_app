@@ -32,7 +32,8 @@ latest_revision() {
 }
 
 checkout_component() {
-  local name="$1" repository="$2" branch="$3" revision="$4" destination="$components_root/$name"
+  local name="$1" repository="$2" branch="$3" revision="$4" destination
+  destination="$components_root/$name"
   [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
   if [[ ! -d "$destination/.git" ]]; then
     git_with_components_auth clone --depth=1 --filter=blob:none --no-checkout --quiet \
@@ -40,8 +41,8 @@ checkout_component() {
   fi
   if [[ "$(git -C "$destination" rev-parse HEAD 2>/dev/null || true)" != "$revision" ]]; then
     git_with_components_auth -C "$destination" fetch --quiet origin "$revision"
-    git -C "$destination" checkout --quiet --detach "$revision"
   fi
+  git -C "$destination" checkout --quiet --detach "$revision"
   [[ "$(git -C "$destination" rev-parse HEAD)" == "$revision" ]]
 }
 
