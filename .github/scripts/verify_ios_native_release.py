@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Verify a downloaded iOS component Release against resolved source revisions."""
+"""Verify the latest iOS component Release and its internal source metadata."""
 
 import json
 import plistlib
+import re
 from pathlib import Path
 import sys
 import zipfile
@@ -25,7 +26,7 @@ for name in (
     FRAMEWORKS[name] = f"pods/FFmpegKit/Frameworks/{name}.xcframework/Info.plist"
 
 
-def verify(archive_path, manifest_path, release_tag, ksplayer_revision, ffmpegkit_revision):
+def verify(archive_path, manifest_path, release_tag):
     with zipfile.ZipFile(archive_path) as archive:
         manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
         embedded_manifest = json.loads(archive.read("release-manifest.json"))
@@ -34,10 +35,12 @@ def verify(archive_path, manifest_path, release_tag, ksplayer_revision, ffmpegki
         if manifest.get("tag") != release_tag:
             raise ValueError("Release 清单标签与下载标签不匹配")
         fingerprint = manifest.get("fingerprint", {})
-        if fingerprint.get("ksplayer_revision") != ksplayer_revision:
-            raise ValueError("Release 中的 KSPlayer 提交与当前 main 不匹配")
-        if fingerprint.get("ffmpegkit_revision") != ffmpegkit_revision:
-            raise ValueError("Release 中的 FFmpegKit 提交与当前 main 不匹配")
+        if fingerprint.get("tag") != release_tag:
+            raise ValueError("Release 构建指纹标签与下载标签不匹配")
+        ksplayer_revision = fingerprint.get("ksplayer_revision", "")
+        ffmpegkit_revision = fingerprint.get("ffmpegkit_revision", "")
+        if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (ksplayer_revision, ffmpegkit_revision)):
+            raise ValueError("Release 的组件提交格式无效")
         sources = manifest.get("sources", {})
         for component, expected in (
             ("KSPlayer", ksplayer_revision),
@@ -79,9 +82,9 @@ def verify(archive_path, manifest_path, release_tag, ksplayer_revision, ffmpegki
 
 
 def main():
-    if len(sys.argv) != 6:
-        raise SystemExit("usage: verify_ios_native_release.py ZIP MANIFEST RELEASE_TAG KSPLAYER_SHA FFMPEGKIT_SHA")
-    verify(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+    if len(sys.argv) != 4:
+        raise SystemExit("usage: verify_ios_native_release.py ZIP MANIFEST RELEASE_TAG")
+    verify(sys.argv[1], sys.argv[2], sys.argv[3])
 
 
 if __name__ == "__main__":

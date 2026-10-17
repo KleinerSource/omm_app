@@ -490,10 +490,6 @@ jobs:
       APP_VERSION: ${{ needs.version.outputs.version }}
       CI: 'true'
       COCOAPODS_DISABLE_STATS: 'true'
-      KSPLAYER_REPOSITORY: https://github.com/KleinerSource/KSPlayer.git
-      KSPLAYER_BRANCH: main
-      FFMPEGKIT_REPOSITORY: https://github.com/KleinerSource/FFmpegKit.git
-      FFMPEGKIT_BRANCH: main
       BUILD_PLATFORM: ios
     steps:
     - uses: actions/checkout@v7
@@ -521,22 +517,10 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - name: 解析最新组件提交与源码匹配 Release
-      id: native-release-plan
-      run: bash .github/scripts/build_ios_native.sh plan
-      env:
-        GH_TOKEN: ${{ github.token }}
-        COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
-      timeout-minutes: 10
-    - name: 下载或生成匹配的组件 Release
+    - name: 下载最新组件 Release
       id: native-release
       run: bash .github/scripts/build_ios_native.sh release
-      env:
-        GH_TOKEN: ${{ github.token }}
-        COMPONENTS_TOKEN: ${{ secrets.COMPONENTS_TOKEN }}
-        KSPLAYER_REVISION: ${{ steps.native-release-plan.outputs.ksplayer_revision }}
-        FFMPEGKIT_REVISION: ${{ steps.native-release-plan.outputs.ffmpegkit_revision }}
-      timeout-minutes: 95
+      timeout-minutes: 20
     - name: 校验并导出 iOS 原生 Pod 路径
       run: |
         test -f source/build/ios-native/pods/FFmpegKit/native-versions.json
