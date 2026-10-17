@@ -31,13 +31,25 @@ for attempt in 1 2 3; do
   sleep 5
 done
 
-unzip -q "$download_dir/ios-native-pods.zip" -d "$staging_dir"
+# 迁移期间也可复用旧组合包中的底层库，忽略其中的播放器二进制。
+python3 - "$download_dir/ios-native-pods.zip" "$staging_dir" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    members = [name for name in archive.namelist() if name.startswith('pods/FFmpegKit/')]
+    archive.extractall(sys.argv[2], members=members)
+PY
+git clone --quiet --depth=1 --branch main \
+  https://github.com/KleinerSource/KSPlayer.git "$staging_dir/pods/KSPlayer"
+ksplayer_revision="$(git -C "$staging_dir/pods/KSPlayer" rev-parse HEAD)"
+native_checksum="$(awk 'NR == 1 { print $1 }' "$download_dir/ios-native-pods.zip.sha256")"
+[[ "$ksplayer_revision" =~ ^[0-9a-f]{40}$ && "$native_checksum" =~ ^[0-9a-f]{64}$ ]]
+printf 'KSPlayer 源码提交: %s\n底层库归档 SHA-256: %s\n' "$ksplayer_revision" "$native_checksum"
 for artifact in \
   "$staging_dir/pods/KSPlayer/KSPlayer.podspec" \
   "$staging_dir/pods/KSPlayer/DisplayCriteria.podspec" \
-  "$staging_dir/pods/KSPlayer/Frameworks/KSPlayer.xcframework/Info.plist" \
-  "$staging_dir/pods/KSPlayer/Frameworks/DisplayCriteria.xcframework/Info.plist" \
-  "$staging_dir/pods/KSPlayer/Resources/Metal/Shaders.metal" \
+  "$staging_dir/pods/KSPlayer/Sources/KSPlayer/MEPlayer/KSMEPlayer.swift" \
+  "$staging_dir/pods/KSPlayer/Sources/DisplayCriteria" \
+  "$staging_dir/pods/KSPlayer/Sources/KSPlayer/Metal/Shaders.metal" \
   "$staging_dir/pods/FFmpegKit/FFmpegKit.podspec" \
   "$staging_dir/pods/FFmpegKit/Libass.podspec" \
   "$staging_dir/pods/FFmpegKit/Frameworks/FFmpegKit.xcframework/Info.plist" \
@@ -55,4 +67,5 @@ cp "$download_dir/ios-native-pods.zip.sha256" "$native_output/ios-native-pods.zi
 printf 'IOS_NATIVE_PODS=%s\n' "$native_output/pods" >> "$GITHUB_ENV"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   printf 'release_tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+  printf 'ksplayer_revision=%s\nnative_checksum=%s\n' "$ksplayer_revision" "$native_checksum" >> "$GITHUB_OUTPUT"
 fi

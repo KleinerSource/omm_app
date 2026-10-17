@@ -10,8 +10,6 @@ import zipfile
 
 
 FRAMEWORKS = {
-    "KSPlayer": "pods/KSPlayer/Frameworks/KSPlayer.xcframework/Info.plist",
-    "DisplayCriteria": "pods/KSPlayer/Frameworks/DisplayCriteria.xcframework/Info.plist",
     "FFmpegKit": "pods/FFmpegKit/Frameworks/FFmpegKit.xcframework/Info.plist",
     "Libass": "pods/FFmpegKit/Frameworks/libass.xcframework/Info.plist",
     "libfreetype": "pods/FFmpegKit/Frameworks/libfreetype.xcframework/Info.plist",
@@ -37,14 +35,11 @@ def verify(archive_path, manifest_path, release_tag):
         fingerprint = manifest.get("fingerprint", {})
         if fingerprint.get("tag") != release_tag:
             raise ValueError("Release 构建指纹标签与下载标签不匹配")
-        ksplayer_revision = fingerprint.get("ksplayer_revision", "")
         ffmpegkit_revision = fingerprint.get("ffmpegkit_revision", "")
-        if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (ksplayer_revision, ffmpegkit_revision)):
+        if not re.fullmatch(r"[0-9a-f]{40}", ffmpegkit_revision):
             raise ValueError("Release 的组件提交格式无效")
         sources = manifest.get("sources", {})
         for component, expected in (
-            ("KSPlayer", ksplayer_revision),
-            ("DisplayCriteria", ksplayer_revision),
             ("FFmpegKit", ffmpegkit_revision),
             ("Libass", ffmpegkit_revision),
         ):

@@ -517,15 +517,15 @@ jobs:
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
-    - name: 下载最新组件 Release
+    - name: 下载底层库并拉取最新 KSPlayer 源码
       id: native-release
       run: bash .github/scripts/build_ios_native.sh release
       timeout-minutes: 20
     - name: 校验并导出 iOS 原生 Pod 路径
       run: |
         test -f source/build/ios-native/pods/FFmpegKit/native-versions.json
-        test -f source/build/ios-native/pods/KSPlayer/Frameworks/KSPlayer.xcframework/Info.plist
-        test -f source/build/ios-native/pods/KSPlayer/Frameworks/DisplayCriteria.xcframework/Info.plist
+        test -f source/build/ios-native/pods/KSPlayer/Sources/KSPlayer/MEPlayer/KSMEPlayer.swift
+        test -d source/build/ios-native/pods/KSPlayer/Sources/DisplayCriteria
         test -f source/build/ios-native/pods/FFmpegKit/Frameworks/FFmpegKit.xcframework/Info.plist
         grep -q '"ffmpeg_version": "n8.1"' source/build/ios-native/pods/FFmpegKit/native-versions.json
         grep -q '"libavcodec": "62.28.100"' source/build/ios-native/pods/FFmpegKit/native-versions.json
@@ -576,9 +576,9 @@ jobs:
       uses: actions/cache@v5
       with:
         path: source/build/ios
-        key: ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release.outputs.release_tag }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-${{ env.SOURCE_SHA }}-${{ env.APP_VERSION }}
+        key: ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release.outputs.native_checksum }}-${{ steps.native-release.outputs.ksplayer_revision }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-${{ env.SOURCE_SHA }}-${{ env.APP_VERSION }}
         restore-keys: |
-          ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release.outputs.release_tag }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-
+          ios-derived-${{ runner.os }}-${{ needs.resolve.outputs.flutter_version }}-${{ steps.native-release.outputs.native_checksum }}-${{ steps.native-release.outputs.ksplayer_revision }}-${{ hashFiles('source/ios/Podfile.lock') }}-${{ env.SOURCE_BRANCH }}-
     - name: ios-compile
       run: |
         [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]
