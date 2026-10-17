@@ -616,7 +616,14 @@ jobs:
         if [ "$SOURCE_BRANCH" = dev ]; then prefix=omm_dev; fi
         name="${prefix}_${APP_VERSION}.ipa"
         find source/build/ios/iphoneos/Runner.app/Frameworks -type d -name Headers -prune -exec rm -rf {} +
-        (cd source/build/ios/iphoneos; mkdir Payload; cp -R Runner.app Payload/; zip -qry "$name" Payload)
+        (
+          cd source/build/ios/iphoneos
+          rm -rf Payload
+          rm -f "$name"
+          mkdir Payload
+          cp -R Runner.app Payload/
+          zip -qry "$name" Payload
+        )
         package="source/build/ios/iphoneos/$name"
         scan="$(mktemp -d "${BASH_ENV%/*}/omm-scan.XXXXXX")"
         unzip -q "$package" -d "$scan"
