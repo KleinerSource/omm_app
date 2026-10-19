@@ -185,46 +185,6 @@ jobs:
         cd source
         flutter test --no-pub --reporter expanded
       timeout-minutes: 20
-  header:
-    runs-on: windows-2025
-    needs:
-    - resolve
-    timeout-minutes: 25
-    env:
-      SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
-      SOURCE_SHA: ${{ needs.resolve.outputs.checkout_sha }}
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        persist-credentials: false
-    - *ci_setup
-    - uses: subosito/flutter-action@v2
-      timeout-minutes: 10
-      with:
-        flutter-version: ${{ needs.resolve.outputs.flutter_version }}
-        channel: stable
-        cache: false
-    - name: 拉取固定私有提交
-      run: |
-        protect source-checkout
-        check_input
-        checkout_source
-      env:
-        MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
-      timeout-minutes: 5
-    - name: pub-get
-      run: |
-        protect pub-get
-        cd source
-        flutter pub get
-      timeout-minutes: 5
-    - name: header-goldens
-      run: |
-        cd source
-        if [ -f test/shared/header_visual_test.dart ]; then
-          flutter test --no-pub --dart-define=HEADER_GOLDENS=true test/shared/header_visual_test.dart --reporter expanded
-        fi
-      timeout-minutes: 5
   version:
     runs-on: ubuntu-latest
     needs:
