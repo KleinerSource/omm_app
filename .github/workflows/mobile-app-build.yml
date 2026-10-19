@@ -190,7 +190,6 @@ jobs:
     needs:
     - resolve
     - test
-    - header
     timeout-minutes: 20
     env:
       SOURCE_BRANCH: ${{ needs.resolve.outputs.source_branch }}
