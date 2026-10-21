@@ -239,7 +239,7 @@ jobs:
           body="$(printf '%s' "$release" | jq -r '.body // ""')"
           base="$(printf '%s' "$body" | sed -nE 's/^commit: ([0-9a-f]{40})$/\1/p')"
           if [ "$base" = "$SOURCE_SHA" ]; then
-            # 重跑复用既有摘要，保证同一版本的内嵌日志和说明一致。
+            # 重跑复用既有摘要，保证同一版本的发布说明一致。
             printf '%s\n' "$body" | sed -n '/^本次构建包含以下更新：$/,$p' | sed '1d;/^commit: /d;/^run: /d' > "release-metadata/$platform.txt"
             continue
           fi
@@ -279,7 +279,6 @@ jobs:
       SOURCE_SHA: ${{ needs.version.outputs.build_sha }}
       APP_VERSION: ${{ needs.version.outputs.version }}
       ABI_NAME: ${{ matrix.abi }}
-      BUILD_PLATFORM: android
     steps:
     - uses: actions/checkout@v7
       with:
@@ -303,10 +302,6 @@ jobs:
       env:
         MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
       timeout-minutes: 5
-    - uses: actions/download-artifact@v8
-      with:
-        name: release-metadata-${{ github.run_id }}
-        path: release-metadata
     - name: android-sdk
       run: |
         protect android-sdk
@@ -352,11 +347,6 @@ jobs:
         ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-    - name: 写入同一份净化摘要
-      run: |
-        protect embed-summary
-        cd source
-        dart tool/generate_build_changelog.dart --version "$APP_VERSION" --notes-file "../release-metadata/$BUILD_PLATFORM.txt"
     - name: code-generation
       run: |
         protect code-generation
@@ -449,7 +439,6 @@ jobs:
       APP_VERSION: ${{ needs.version.outputs.version }}
       CI: 'true'
       COCOAPODS_DISABLE_STATS: 'true'
-      BUILD_PLATFORM: ios
     steps:
     - uses: actions/checkout@v7
       with:
@@ -469,10 +458,6 @@ jobs:
       env:
         MOBILE_APP_SOURCE_TOKEN: ${{ secrets.MOBILE_APP_SOURCE_TOKEN }}
       timeout-minutes: 5
-    - uses: actions/download-artifact@v8
-      with:
-        name: release-metadata-${{ github.run_id }}
-        path: release-metadata
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
@@ -519,11 +504,6 @@ jobs:
         cd source/ios
         if [ -f Podfile ]; then pod install --repo-update; fi
       timeout-minutes: 15
-    - name: 写入同一份净化摘要
-      run: |
-        protect embed-summary
-        cd source
-        dart tool/generate_build_changelog.dart --version "$APP_VERSION" --notes-file "../release-metadata/$BUILD_PLATFORM.txt"
     - name: code-generation
       run: |
         protect code-generation
